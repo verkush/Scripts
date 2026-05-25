@@ -29,7 +29,7 @@ pipeline {
     environment {
 
         /*
-         * Base Repository Directory
+         * Repository Clone Directory
          */
         BASE_DIR = 'C:\\HSE'
 
@@ -49,12 +49,17 @@ pipeline {
         ELF_DIR = 'C:\\HSE\\builds\\build_k388_gm_ext_VDK_UNIT\\bin'
 
         /*
-         * Artifact Storage Directory
+         * Temporary Artifact Directory in HSE
          */
-        ARTIFACT_DIR = 'C:\\HSE\\Artifacts'
+        HSE_ARTIFACT_DIR = 'C:\\HSE\\Artifacts'
 
         /*
-         * Jenkins Credentials ID
+         * Jenkins Workspace Artifact Directory
+         */
+        WORKSPACE_ARTIFACT_DIR = "${WORKSPACE}\\Artifacts"
+
+        /*
+         * Jenkins Credentials
          */
         GIT_CREDENTIALS_ID = 'bitbucket-ssh-creds'
     }
@@ -85,7 +90,7 @@ pipeline {
 
         /*
          * Stage 2
-         * Clone Bitbucket Repository
+         * Clone Repository
          */
         stage('Clone Repository') {
 
@@ -192,29 +197,29 @@ pipeline {
 
                     /*
                      * STEP 3
-                     * Create Artifact Directory
+                     * Create HSE Artifact Directory
                      */
                     echo "========================================"
-                    echo "Creating Artifact Directory"
+                    echo "Creating HSE Artifact Directory"
                     echo "========================================"
 
                     bat """
-                        IF NOT EXIST "${env.ARTIFACT_DIR}" (
-                            mkdir "${env.ARTIFACT_DIR}"
+                        IF NOT EXIST "${env.HSE_ARTIFACT_DIR}" (
+                            mkdir "${env.HSE_ARTIFACT_DIR}"
                         )
                     """
 
                     /*
                      * STEP 4
-                     * Copy ELF Files
+                     * Copy ELF Files to HSE Artifact Directory
                      */
                     echo "========================================"
-                    echo "Copying ELF Files"
+                    echo "Copying ELF Files to HSE Artifact Directory"
                     echo "========================================"
 
                     bat """
                         IF EXIST "${env.ELF_DIR}\\*.elf" (
-                            copy "${env.ELF_DIR}\\*.elf" "${env.ARTIFACT_DIR}\\"
+                            copy "${env.ELF_DIR}\\*.elf" "${env.HSE_ARTIFACT_DIR}\\"
                         ) ELSE (
                             echo ELF file not found.
                             exit /b 1
@@ -223,14 +228,40 @@ pipeline {
 
                     /*
                      * STEP 5
-                     * Verify Artifacts
+                     * Create Jenkins Workspace Artifact Directory
+                     */
+                    echo "========================================"
+                    echo "Creating Jenkins Workspace Artifact Directory"
+                    echo "========================================"
+
+                    bat """
+                        IF NOT EXIST "${env.WORKSPACE_ARTIFACT_DIR}" (
+                            mkdir "${env.WORKSPACE_ARTIFACT_DIR}"
+                        )
+                    """
+
+                    /*
+                     * STEP 6
+                     * Copy ELF Files to Jenkins Workspace
+                     */
+                    echo "========================================"
+                    echo "Copying ELF Files to Jenkins Workspace"
+                    echo "========================================"
+
+                    bat """
+                        copy "${env.HSE_ARTIFACT_DIR}\\*.elf" "${env.WORKSPACE_ARTIFACT_DIR}\\"
+                    """
+
+                    /*
+                     * STEP 7
+                     * Verify Artifact Directory
                      */
                     echo "========================================"
                     echo "Artifact Directory Contents"
                     echo "========================================"
 
                     bat """
-                        dir "${env.ARTIFACT_DIR}"
+                        dir "${env.WORKSPACE_ARTIFACT_DIR}"
                     """
                 }
             }
