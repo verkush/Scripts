@@ -13,6 +13,7 @@ pipeline {
 
     /*
      * Nightly Trigger
+     * Runs every night
      */
     triggers {
         cron('H 2 * * *')
@@ -29,14 +30,14 @@ pipeline {
         string(
             name: 'BRANCH',
             defaultValue: 'gm_master',
-            description: 'Git Branch Name'
+            description: 'Git Branch'
         )
     }
 
     environment {
 
         /*
-         * Repository Clone Directory
+         * HSE Repository Location
          */
         BASE_DIR = 'C:\\HSE'
 
@@ -56,22 +57,17 @@ pipeline {
         ELF_DIR = 'C:\\HSE\\builds\\build_k388_gm_ext_VDK_UNIT\\bin'
 
         /*
-         * Artifact Directory Outside Repo
+         * Artifact Directory
          */
         HSE_ARTIFACT_DIR = 'C:\\HSE_Artifacts'
 
         /*
-         * Jenkins Workspace Artifact Directory
-         */
-        WORKSPACE_ARTIFACT_DIR = "${WORKSPACE}\\Artifacts"
-
-        /*
-         * VDK VPScript Location
+         * VPScript Location
          */
         VPSCRIPT_PATH = 'C:\\VDK_Testing\\NXP_S32K388_System\\NXP_S32K388_System\\vpconfigs\\TestSW_HSEFW\\vpscript.py'
 
         /*
-         * Jenkins Credentials
+         * Jenkins Git Credentials
          */
         GIT_CREDENTIALS_ID = 'bitbucket-ssh-creds'
     }
@@ -109,7 +105,7 @@ pipeline {
             steps {
 
                 echo "========================================"
-                echo "Cloning Bitbucket Repository"
+                echo "Cloning Repository"
                 echo "Repository : ${params.REPO_URL}"
                 echo "Branch     : ${params.BRANCH}"
                 echo "========================================"
@@ -126,7 +122,9 @@ pipeline {
                         doGenerateSubmoduleConfigurations: false,
 
                         extensions: [
+
                             [$class: 'CleanBeforeCheckout'],
+
                             [$class: 'CloneOption',
                                 shallow: false,
                                 noTags: false,
@@ -145,120 +143,124 @@ pipeline {
 
         /*
          * Stage 3
-         * Generate Build + Compile Firmware
+         * Generate Build Files
          */
-        stage('VDK Build and Firmware Compilation') {
+        stage('Generate Build Files') {
+
+            steps {
+
+                echo "========================================"
+                echo "Generating Build Files"
+                echo "========================================"
+
+                dir("${env.GENERATION_DIR}") {
+
+                    bat '''
+                        echo ========================================
+                        echo Generating Build Files
+                        echo ========================================
+
+                        echo Current Directory:
+                        cd
+
+                        echo Available BAT Files:
+                        dir *.bat
+
+                        call gen_k388_gm_ext_VDK_UNIT.bat
+
+                        IF %ERRORLEVEL% NEQ 0 (
+                            echo Build generation failed.
+                            exit /b %ERRORLEVEL%
+                        )
+
+                        echo Build generation completed successfully.
+                    '''
+                }
+            }
+        }
+
+        /*
+         * Stage 4
+         * Ninja Firmware Compilation
+         */
+        stage('Ninja Firmware Compilation') {
+
+            steps {
+
+                echo "========================================"
+                echo "Running Ninja Compilation"
+                echo "========================================"
+
+                dir("${env.BUILD_DIR}") {
+
+                    bat '''
+                        echo ========================================
+                        echo Running Ninja Build
+                        echo ========================================
+
+                        echo Current Directory:
+                        cd
+
+                        ninja hse_fw
+
+                        IF %ERRORLEVEL% NEQ 0 (
+                            echo Ninja build failed.
+                            exit /b %ERRORLEVEL%
+                        )
+
+                        echo Ninja build completed successfully.
+                    '''
+                }
+            }
+        }
+
+        /*
+         * Stage 5
+         * Copy ELF Files
+         */
+        stage('Copy ELF Files') {
+
+            steps {
+
+                echo "========================================"
+                echo "Copying ELF Files"
+                echo "========================================"
+
+                bat """
+                    IF NOT EXIST "${env.HSE_ARTIFACT_DIR}" (
+                        mkdir "${env.HSE_ARTIFACT_DIR}"
+                    )
+                """
+
+                bat """
+                    IF EXIST "${env.ELF_DIR}\\*.elf" (
+                        copy /Y "${env.ELF_DIR}\\*.elf" "${env.HSE_ARTIFACT_DIR}\\"
+                    ) ELSE (
+                        echo ELF file not found.
+                        exit /b 1
+                    )
+                """
+
+                bat """
+                    dir "${env.HSE_ARTIFACT_DIR}"
+                """
+            }
+        }
+
+        /*
+         * Stage 6
+         * Update VDK VPScript
+         */
+        stage('Update VPScript') {
 
             steps {
 
                 script {
 
                     echo "========================================"
-                    echo "VDK Firmware Build Started"
+                    echo "Detecting Latest ELF"
                     echo "========================================"
 
-                    /*
-                     * STEP 1
-                     * Generate Build Files
-                     */
-                    echo "========================================"
-                    echo "Generating Build Files"
-                    echo "========================================"
-
-                    dir("${env.GENERATION_DIR}") {
-
-                        bat '''
-                            echo Current Directory:
-                            cd
-
-                            echo Available BAT Files:
-                            dir *.bat
-
-                            call gen_k388_gm_ext_VDK_UNIT.bat
-
-                            IF %ERRORLEVEL% NEQ 0 (
-                                echo Build generation failed.
-                                exit /b %ERRORLEVEL%
-                            )
-                        '''
-                    }
-
-                    /*
-                     * STEP 2
-                     * Run Ninja Build
-                     */
-                    echo "========================================"
-                    echo "Running Ninja Compilation"
-                    echo "========================================"
-
-                    dir("${env.BUILD_DIR}") {
-
-                        bat '''
-                            echo Current Directory:
-                            cd
-
-                            ninja hse_fw
-
-                            IF %ERRORLEVEL% NEQ 0 (
-                                echo Ninja build failed.
-                                exit /b %ERRORLEVEL%
-                            )
-                        '''
-                    }
-
-                    /*
-                     * STEP 3
-                     * Create Artifact Directory
-                     */
-                    echo "========================================"
-                    echo "Creating Artifact Directory"
-                    echo "========================================"
-
-                    bat """
-                        IF NOT EXIST "${env.HSE_ARTIFACT_DIR}" (
-                            mkdir "${env.HSE_ARTIFACT_DIR}"
-                        )
-                    """
-
-                    /*
-                     * STEP 4
-                     * Copy ELF Files
-                     */
-                    echo "========================================"
-                    echo "Copying ELF Files"
-                    echo "========================================"
-
-                    bat """
-                        IF EXIST "${env.ELF_DIR}\\*.elf" (
-                            copy "${env.ELF_DIR}\\*.elf" "${env.HSE_ARTIFACT_DIR}\\"
-                        ) ELSE (
-                            echo ELF file not found.
-                            exit /b 1
-                        )
-                    """
-
-                    /*
-                     * STEP 5
-                     * Create Jenkins Artifact Directory
-                     */
-                    bat """
-                        IF NOT EXIST "${env.WORKSPACE_ARTIFACT_DIR}" (
-                            mkdir "${env.WORKSPACE_ARTIFACT_DIR}"
-                        )
-                    """
-
-                    /*
-                     * STEP 6
-                     * Copy ELF to Jenkins Workspace
-                     */
-                    bat """
-                        copy "${env.HSE_ARTIFACT_DIR}\\*.elf" "${env.WORKSPACE_ARTIFACT_DIR}\\"
-                    """
-
-                    /*
-                     * STEP 7
-                     * Detect Generated ELF File
-                     */
                     def elfFile = bat(
                         script: """
                             @echo off
@@ -267,75 +269,45 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    echo "========================================"
-                    echo "Detected ELF File"
+                    echo "Detected ELF:"
                     echo "${elfFile}"
-                    echo "========================================"
 
                     /*
-                     * STEP 8
-                     * Update VPScript.py with latest ELF
+                     * Convert Windows path for Python string
                      */
+                    def formattedElf = elfFile.replace("\\", "\\\\")
+
+                    /*
+                     * VPScript Path
+                     */
+                    def vpScript = env.VPSCRIPT_PATH
+
                     echo "========================================"
                     echo "Updating VPScript.py"
                     echo "========================================"
 
                     powershell """
-                        \$file = '${env.VPSCRIPT_PATH}'
+                        \$file = "${vpScript}"
 
                         Write-Host "Updating file:"
                         Write-Host \$file
 
                         \$content = Get-Content \$file
 
-                        \$updated = \$content -replace 'load_image\\(".*?\\.elf"\\)', 'load_image("${elfFile.replace("\\\\", "/")}")'
+                        \$updated = \$content -replace 'load_image\\(".*?\\.elf"\\)', 'load_image("${formattedElf}")'
 
                         Set-Content \$file \$updated
 
                         Write-Host "VPScript updated successfully."
                     """
 
-                    /*
-                     * STEP 9
-                     * Verify Updated VPScript
-                     */
+                    echo "========================================"
+                    echo "Updated load_image() Entry"
+                    echo "========================================"
+
                     powershell """
-                        Get-Content '${env.VPSCRIPT_PATH}' | Select-String 'load_image'
+                        Get-Content "${vpScript}" | Select-String "load_image"
                     """
-
-                    /*
-                     * STEP 10
-                     * Verify Jenkins Artifacts
-                     */
-                    echo "========================================"
-                    echo "Artifact Directory Contents"
-                    echo "========================================"
-
-                    bat """
-                        dir "${env.WORKSPACE_ARTIFACT_DIR}"
-                    """
-                }
-            }
-
-            post {
-
-                success {
-
-                    echo "========================================"
-                    echo "VDK Firmware Build Completed Successfully"
-                    echo "========================================"
-
-                    archiveArtifacts(
-                        artifacts: 'Artifacts/*.elf',
-                        fingerprint: true
-                    )
-                }
-
-                failure {
-
-                    echo "========================================"
-                    echo "VDK Firmware Build Failed"
-                    echo "========================================"
                 }
             }
         }
