@@ -5,10 +5,17 @@ pipeline {
     }
 
     options {
-        timeout(time: 90, unit: 'MINUTES')
+        timeout(time: 120, unit: 'MINUTES')
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    /*
+     * Nightly Trigger
+     */
+    triggers {
+        cron('H 2 * * *')
     }
 
     parameters {
@@ -49,14 +56,19 @@ pipeline {
         ELF_DIR = 'C:\\HSE\\builds\\build_k388_gm_ext_VDK_UNIT\\bin'
 
         /*
-         * Temporary Artifact Directory in HSE
+         * Artifact Directory Outside Repo
          */
-        HSE_ARTIFACT_DIR = 'C:\\HSE\\Artifacts'
+        HSE_ARTIFACT_DIR = 'C:\\HSE_Artifacts'
 
         /*
          * Jenkins Workspace Artifact Directory
          */
         WORKSPACE_ARTIFACT_DIR = "${WORKSPACE}\\Artifacts"
+
+        /*
+         * VDK VPScript Location
+         */
+        VPSCRIPT_PATH = 'C:\\VDK_Testing\\NXP_S32K388_System\\NXP_S32K388_System\\vpconfigs\\TestSW_HSEFW\\vpscript.py'
 
         /*
          * Jenkins Credentials
@@ -68,7 +80,7 @@ pipeline {
 
         /*
          * Stage 1
-         * Clean Existing Environment
+         * Clean Environment
          */
         stage('Clean Environment') {
 
@@ -100,7 +112,6 @@ pipeline {
                 echo "Cloning Bitbucket Repository"
                 echo "Repository : ${params.REPO_URL}"
                 echo "Branch     : ${params.BRANCH}"
-                echo "Clone Path : ${env.BASE_DIR}"
                 echo "========================================"
 
                 dir("${env.BASE_DIR}") {
@@ -197,10 +208,10 @@ pipeline {
 
                     /*
                      * STEP 3
-                     * Create HSE Artifact Directory
+                     * Create Artifact Directory
                      */
                     echo "========================================"
-                    echo "Creating HSE Artifact Directory"
+                    echo "Creating Artifact Directory"
                     echo "========================================"
 
                     bat """
@@ -211,10 +222,10 @@ pipeline {
 
                     /*
                      * STEP 4
-                     * Copy ELF Files to HSE Artifact Directory
+                     * Copy ELF Files
                      */
                     echo "========================================"
-                    echo "Copying ELF Files to HSE Artifact Directory"
+                    echo "Copying ELF Files"
                     echo "========================================"
 
                     bat """
@@ -228,12 +239,8 @@ pipeline {
 
                     /*
                      * STEP 5
-                     * Create Jenkins Workspace Artifact Directory
+                     * Create Jenkins Artifact Directory
                      */
-                    echo "========================================"
-                    echo "Creating Jenkins Workspace Artifact Directory"
-                    echo "========================================"
-
                     bat """
                         IF NOT EXIST "${env.WORKSPACE_ARTIFACT_DIR}" (
                             mkdir "${env.WORKSPACE_ARTIFACT_DIR}"
@@ -242,19 +249,63 @@ pipeline {
 
                     /*
                      * STEP 6
-                     * Copy ELF Files to Jenkins Workspace
+                     * Copy ELF to Jenkins Workspace
                      */
-                    echo "========================================"
-                    echo "Copying ELF Files to Jenkins Workspace"
-                    echo "========================================"
-
                     bat """
                         copy "${env.HSE_ARTIFACT_DIR}\\*.elf" "${env.WORKSPACE_ARTIFACT_DIR}\\"
                     """
 
                     /*
                      * STEP 7
-                     * Verify Artifact Directory
+                     * Detect Generated ELF File
+                     */
+                    def elfFile = bat(
+                        script: """
+                            @echo off
+                            for %%i in ("${env.ELF_DIR}\\*.elf") do echo %%~fi
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo "========================================"
+                    echo "Detected ELF File"
+                    echo "${elfFile}"
+                    echo "========================================"
+
+                    /*
+                     * STEP 8
+                     * Update VPScript.py with latest ELF
+                     */
+                    echo "========================================"
+                    echo "Updating VPScript.py"
+                    echo "========================================"
+
+                    powershell """
+                        \$file = '${env.VPSCRIPT_PATH}'
+
+                        Write-Host "Updating file:"
+                        Write-Host \$file
+
+                        \$content = Get-Content \$file
+
+                        \$updated = \$content -replace 'load_image\\(".*?\\.elf"\\)', 'load_image("${elfFile.replace("\\\\", "/")}")'
+
+                        Set-Content \$file \$updated
+
+                        Write-Host "VPScript updated successfully."
+                    """
+
+                    /*
+                     * STEP 9
+                     * Verify Updated VPScript
+                     */
+                    powershell """
+                        Get-Content '${env.VPSCRIPT_PATH}' | Select-String 'load_image'
+                    """
+
+                    /*
+                     * STEP 10
+                     * Verify Jenkins Artifacts
                      */
                     echo "========================================"
                     echo "Artifact Directory Contents"
