@@ -1,0 +1,286 @@
+pipeline {
+
+    agent {
+        label 'NXW37335.wbi.nxp.com'
+    }
+
+    options {
+        timeout(time: 90, unit: 'MINUTES')
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+    }
+
+    parameters {
+
+        string(
+            name: 'REPO_URL',
+            defaultValue: 'git@bitbucket.sw.nxp.com:aft/hse.git',
+            description: 'Bitbucket Repository URL'
+        )
+
+        string(
+            name: 'BRANCH',
+            defaultValue: 'gm_master',
+            description: 'Git Branch Name'
+        )
+    }
+
+    environment {
+
+        /*
+         * Base Repository Directory
+         */
+        BASE_DIR = 'C:\\HSE'
+
+        /*
+         * Build Generation Directory
+         */
+        GENERATION_DIR = 'C:\\HSE\\generate_builds\\S32K3\\S32K388\\CUSTOM\\GM_EXT\\VDK'
+
+        /*
+         * Ninja Build Directory
+         */
+        BUILD_DIR = 'C:\\HSE\\builds\\build_k388_gm_ext_VDK_UNIT'
+
+        /*
+         * ELF Output Directory
+         */
+        ELF_DIR = 'C:\\HSE\\builds\\build_k388_gm_ext_VDK_UNIT\\bin'
+
+        /*
+         * Artifact Storage Directory
+         */
+        ARTIFACT_DIR = 'C:\\HSE\\Artifacts'
+
+        /*
+         * Jenkins Credentials ID
+         */
+        GIT_CREDENTIALS_ID = 'bitbucket-ssh-creds'
+    }
+
+    stages {
+
+        /*
+         * Stage 1
+         * Clean Existing Environment
+         */
+        stage('Clean Environment') {
+
+            steps {
+
+                echo "========================================"
+                echo "Cleaning Existing Environment"
+                echo "========================================"
+
+                bat """
+                    IF EXIST "${env.BASE_DIR}" (
+                        rmdir /s /q "${env.BASE_DIR}"
+                    )
+
+                    mkdir "${env.BASE_DIR}"
+                """
+            }
+        }
+
+        /*
+         * Stage 2
+         * Clone Bitbucket Repository
+         */
+        stage('Clone Repository') {
+
+            steps {
+
+                echo "========================================"
+                echo "Cloning Bitbucket Repository"
+                echo "Repository : ${params.REPO_URL}"
+                echo "Branch     : ${params.BRANCH}"
+                echo "Clone Path : ${env.BASE_DIR}"
+                echo "========================================"
+
+                dir("${env.BASE_DIR}") {
+
+                    checkout([
+                        $class: 'GitSCM',
+
+                        branches: [[
+                            name: "*/${params.BRANCH}"
+                        ]],
+
+                        doGenerateSubmoduleConfigurations: false,
+
+                        extensions: [
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'CloneOption',
+                                shallow: false,
+                                noTags: false,
+                                timeout: 30
+                            ]
+                        ],
+
+                        userRemoteConfigs: [[
+                            url: "${params.REPO_URL}",
+                            credentialsId: "${env.GIT_CREDENTIALS_ID}"
+                        ]]
+                    ])
+                }
+            }
+        }
+
+        /*
+         * Stage 3
+         * Generate Build + Compile Firmware
+         */
+        stage('VDK Build and Firmware Compilation') {
+
+            steps {
+
+                script {
+
+                    echo "========================================"
+                    echo "VDK Firmware Build Started"
+                    echo "========================================"
+
+                    /*
+                     * STEP 1
+                     * Generate Build Files
+                     */
+                    echo "========================================"
+                    echo "Generating Build Files"
+                    echo "========================================"
+
+                    dir("${env.GENERATION_DIR}") {
+
+                        bat '''
+                            echo Current Directory:
+                            cd
+
+                            echo Available BAT Files:
+                            dir *.bat
+
+                            call gen_k388_gm_ext_VDK_UNIT.bat
+
+                            IF %ERRORLEVEL% NEQ 0 (
+                                echo Build generation failed.
+                                exit /b %ERRORLEVEL%
+                            )
+                        '''
+                    }
+
+                    /*
+                     * STEP 2
+                     * Run Ninja Build
+                     */
+                    echo "========================================"
+                    echo "Running Ninja Compilation"
+                    echo "========================================"
+
+                    dir("${env.BUILD_DIR}") {
+
+                        bat '''
+                            echo Current Directory:
+                            cd
+
+                            ninja hse_fw
+
+                            IF %ERRORLEVEL% NEQ 0 (
+                                echo Ninja build failed.
+                                exit /b %ERRORLEVEL%
+                            )
+                        '''
+                    }
+
+                    /*
+                     * STEP 3
+                     * Create Artifact Directory
+                     */
+                    echo "========================================"
+                    echo "Creating Artifact Directory"
+                    echo "========================================"
+
+                    bat """
+                        IF NOT EXIST "${env.ARTIFACT_DIR}" (
+                            mkdir "${env.ARTIFACT_DIR}"
+                        )
+                    """
+
+                    /*
+                     * STEP 4
+                     * Copy ELF Files
+                     */
+                    echo "========================================"
+                    echo "Copying ELF Files"
+                    echo "========================================"
+
+                    bat """
+                        IF EXIST "${env.ELF_DIR}\\*.elf" (
+                            copy "${env.ELF_DIR}\\*.elf" "${env.ARTIFACT_DIR}\\"
+                        ) ELSE (
+                            echo ELF file not found.
+                            exit /b 1
+                        )
+                    """
+
+                    /*
+                     * STEP 5
+                     * Verify Artifacts
+                     */
+                    echo "========================================"
+                    echo "Artifact Directory Contents"
+                    echo "========================================"
+
+                    bat """
+                        dir "${env.ARTIFACT_DIR}"
+                    """
+                }
+            }
+
+            post {
+
+                success {
+
+                    echo "========================================"
+                    echo "VDK Firmware Build Completed Successfully"
+                    echo "========================================"
+
+                    archiveArtifacts(
+                        artifacts: 'Artifacts/*.elf',
+                        fingerprint: true
+                    )
+                }
+
+                failure {
+
+                    echo "========================================"
+                    echo "VDK Firmware Build Failed"
+                    echo "========================================"
+                }
+            }
+        }
+    }
+
+    post {
+
+        always {
+
+            echo "========================================"
+            echo "Pipeline Execution Finished"
+            echo "Build Time : ${new Date()}"
+            echo "========================================"
+        }
+
+        success {
+
+            echo "========================================"
+            echo "PIPELINE STATUS : SUCCESS"
+            echo "========================================"
+        }
+
+        failure {
+
+            echo "========================================"
+            echo "PIPELINE STATUS : FAILURE"
+            echo "========================================"
+        }
+    }
+}
